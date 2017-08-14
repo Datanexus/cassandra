@@ -1,0 +1,296 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+---
+# Retrieve the VPC and subnet information
+- name: Retrieve default VPC ID
+  ec2_vpc_net_facts:
+    region: "{{region}}"
+    filters:
+      cidr_block: "{{cidr_block}}"
+  register: specified_vpc
+# retrieve the subnet information
+- name: Retrieve {{internal_subnet}} ID for {{cidr_block}} in {{cloud}} {{region}}
+  ec2_vpc_subnet_facts:
+    region: "{{region}}"
+    filters:
+      cidr_block: "{{internal_subnet}}"
+  register: internal_subnet_result
+- name: Retrieve {{external_subnet}} ID for {{cidr_block}} in {{cloud}} {{region}}
+  ec2_vpc_subnet_facts:
+    region: "{{region}}"
+    filters:
+      cidr_block: "{{external_subnet}}"
+  register: external_subnet_result
+  when: multi_interface
+# if we didn't get at least one VPC back from our cidr_block value, then it's
+# an error
+- fail:
+    msg: "Unrecognized VPC: {{cidr_block}}"
+  when: specified_vpc.vpcs | length == 0
+# if we specified both an internal and external subnet and found neither,
+# then it's an error
+- fail:
+    msg: "Unrecognized subnets: {{internal_subnet}} and {{external_subnet}}"
+  when:
+    - internal_subnet_result.skipped is not defined and internal_subnet_result.subnets | length == 0
+    - external_subnet_result.skipped is not defined and external_subnet_result.subnets | length == 0
+# if we didn't skip the retrieval of the internal subnet facts, grab the
+# internal subnet ID (if we don't have at least one, it's an error)
+- block:
+  - fail:
+      msg: "Unrecognized internal subnet: {{internal_subnet}}"
+    when: internal_subnet_result.subnets | length == 0
+  - set_fact:
+      internal_subnet_id: "{{internal_subnet_result.subnets.0.id}}"
+  when: internal_subnet_result.skipped is not defined
+# if we didn't skip the retrieval of the external subnet facts, grab the
+# external subnet ID (if we don't have at least one, it's an error)
+- block:
+  - fail:
+      msg: "Unrecognized internal subnet: {{external_subnet}}"
+    when: external_subnet_result.subnets | length == 0
+  - set_fact:
+      external_subnet_id: "{{external_subnet_result.subnets.0.id}}"
+  when: multi_interface and external_subnet_result.skipped is not defined
+# if we haven't already found one, then search for a CentOS7 AMI in the input
+# region
+- block:
+  - name: Search for CentOS 7 AMI for your region
+    ec2_ami_find:
+      name: "CentOS Linux 7 x86_64*"
+      region: "{{region}}"
+      owner: 679593333241
+      virtualization_type: hvm
+      sort: name
+      sort_order: descending
+      sort_end: 1
+    register: found_amis
+  - set_fact: image="{{found_amis.results[0].ami_id}}"
+  when: image is undefined
+# create a couple of security groups; one for SSH access to the machines in
+# this project on the internal_subnet via the corresponding jumphost and
+#  another for the application-specific rules that are needed to provide access
+# to the services that the application being deployed provides
+- name: Create a project-specific SSH security group
+  ec2_group:
+    name: "{{project}}_ssh"
+    description: "ssh ingress and unrestricted egress rules (ansible)"
+    vpc_id: "{{specified_vpc.vpcs.0.id}}"
+    region: "{{region}}"
+    rules:
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: "{{internal_subnet}}"
+    rules_egress:
+      # Allow all outbound
+      - proto: all
+        cidr_ip: 0.0.0.0/0
+  register: sg_ssh
+# create a pair of security groups to go with our application within the
+# defined subnets
+- block:
+  - name: Get list of rules that apply to the internal (and external?) subnets
+    set_fact:
+      internal_rules: "{{(multi_interface | bool) | ternary((application_sg_rules | selectattr('cidr_ip', 'equalto', (internal_subnet | default(''))) | list), application_sg_rules + [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ip': '0.0.0.0/0'}])}}"
+      external_rules: "{{(multi_interface | bool) | ternary((application_sg_rules | selectattr('cidr_ip', 'equalto', (external_subnet | default(''))) | list), [])}}"
+      internal_sg_name: "{{(multi_interface | bool) | ternary((project + '_' + application + '_internal'), (project + '_' + application))}}"
+  - name: Create {{internal_sg_name}} security group
+    ec2_group:
+      name: "{{internal_sg_name}}"
+      description: "{{application}} ingress and unrestricted egress rules (ansible)"
+      vpc_id: "{{specified_vpc.vpcs.0.id}}"
+      region: "{{region}}"
+      rules: '{{internal_rules}}'
+      rules_egress:
+        # Allow all outbound
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+    register: sg_application_internal
+    when: internal_rules | length > 0
+  - name: Create {{project}}_{{application}}_external security group
+    ec2_group:
+      name: "{{project}}_{{application}}_external"
+      description: "external {{application}} ingress and unrestricted egress rules (ansible)"
+      vpc_id: "{{specified_vpc.vpcs.0.id}}"
+      region: "{{region}}"
+      rules: '{{external_rules}}'
+      rules_egress:
+        # Allow all outbound
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+    register: sg_application_external
+    when: multi_interface
+  when: application_sg_rules is defined
+# construct the path to and name of the keyfile
+- shell: python -c 'import os; print os.path.abspath("{{private_key_path}}")'
+  register: key_path_out
+- set_fact:
+    keyfile_path: "{{key_path_out.stdout}}/{{region}}-{{project}}-{{application}}-{{domain}}-private-key.pem"
+# check for an exisging key in our private_key_path
+- name: Check for existing {{keyfile_path}} file
+  stat: path="{{keyfile_path}}"
+  register: existing_key
+# if there is an existing key, use it
+- block: 
+  - name: Generate public key from existing {{region}}-{{project}}-{{application}}-{{domain}}-private-key.pem
+    command: "/usr/bin/ssh-keygen -f {{keyfile_path}} -y"
+    register: public_key_from_pem
+  - name: Using existing {{region}}-{{project}}-{{application}}-{{domain}} key
+    ec2_key:
+      region: "{{region}}"
+      state: present
+      name: "{{region}}-{{project}}-{{application}}-{{domain}}"
+      key_material: "{{public_key_from_pem.stdout}}" 
+    register: old_keypair
+  - set_fact: keypair="{{old_keypair}}"
+  when: existing_key.stat.exists
+# otherwise, create a new key pair to use instead
+- block:
+  - name: Create new {{region}}-{{project}}-{{application}}-{{domain}} key
+    ec2_key:
+      name: "{{region}}-{{project}}-{{application}}-{{domain}}"
+      region: "{{region}}"
+    register: new_keypair
+  - set_fact: keypair="{{new_keypair}}"
+  - name: Save new {{region}}-{{project}}-{{application}}-{{domain}} key
+    copy:
+      dest: "{{keyfile_path}}"
+      content: "{{keypair.key.private_key}}"
+      mode: 0400
+  when: not existing_key.stat.exists
+# launch the AMI
+- name: Launch AMIs
+  ec2:
+    key_name: "{{keypair.key.name}}"
+    group_id: 
+      - "{{sg_ssh.group_id}}"
+      - "{{sg_application_internal.group_id}}"
+    instance_type: "{{type | default('t2.micro')}}"
+    image: "{{image}}"
+    vpc_subnet_id: "{{internal_subnet_id}}"
+    region: "{{region}}"
+    assign_public_ip: "{{not(multi_interface)}}"
+    wait: true
+    exact_count: "{{node_map_entry.count | default(1)}}"
+    count_tag:
+      Name: "{{cloud}}_{{tenant}}_{{project}}_{{dataflow | default('none')}}_{{application}}_{{domain}}_{{cluster | default('a')}}"
+      Cloud: "{{cloud}}"
+      Tenant: "{{tenant}}"
+      Project: "{{project}}"
+      Dataflow: "{{dataflow | default('none')}}"
+      Application: "{{application}}"
+      Domain: "{{domain}}"
+      Cluster: "{{cluster | default('a')}}"
+      Role: "{{node_map_entry.role | default('none')}}"
+    instance_tags:
+      Name: "{{cloud}}_{{tenant}}_{{project}}_{{dataflow | default('none')}}_{{application}}_{{domain}}_{{cluster | default('a')}}"
+      Cloud: "{{cloud}}"
+      Tenant: "{{tenant}}"
+      Project: "{{project}}"
+      Dataflow: "{{dataflow | default('none')}}"
+      Application: "{{application}}"
+      Domain: "{{domain}}"
+      Cluster: "{{cluster | default('a')}}"
+      Role: "{{node_map_entry.role | default('none')}}"
+    ebs_optimized: false
+    volumes:
+      - device_name: /dev/sda1
+        volume_type: gp2
+        volume_size: "{{root_volume | default(root_volume_default)}}"
+        delete_on_termination: true
+  with_items: "{{node_map | selectattr('application', 'equalto', application) | list}}"
+  loop_control:
+    loop_var: node_map_entry
+  register: ec2
+# build a flattened list of instances from the results output when running
+# the `ec2` module for the matching entries in the `node_map`, above
+- set_fact:
+    ec2_instances: "{{ec2.results | sum(attribute='instances', start=[]) | list}}"
+# if a data volume was defined, then add a second volume with the defined size
+- name: Add data volume to the instances (if defined)
+  ec2_vol:
+    instance: "{{instance.id}}"
+    region: "{{region}}"
+    device_name: /dev/xvdb
+    volume_type: gp2
+    volume_size: "{{data_volume}}"
+    delete_on_termination: true
+    encrypted: true
+  with_items: "{{ec2_instances}}"
+  loop_control:
+    loop_var: instance
+  when:
+    - not (ec2 | skipped) and (ec2_instances | length) > 0
+    - data_volume is defined
+# create a public internal ENI if needed
+- name: Create public internal ENI as eth1
+  ec2_eni:
+    description: "public internal"
+    instance_id: "{{instance.id}}"
+    region: "{{region}}"
+    subnet_id: "{{external_subnet_id}}"
+    device_index: 1
+    attached: true
+    security_groups: "{{sg_application_external.group_id}}"
+    state: present
+  register: public_eni
+  with_items: "{{ec2_instances}}"
+  loop_control:
+    loop_var: instance
+  when:
+    - external_subnet_id is defined
+    - not (ec2 | skipped) and (ec2_instances | length) > 0
+# if we created the public internal ENI, then configure it to delete
+# on termination and add an EIP
+- block:
+  - name: Configure public internal ENI to delete on termination
+    ec2_eni:
+      region: "{{region}}"
+      eni_id: "{{item.interface.id}}"
+      subnet_id: "{{external_subnet_id}}"
+      delete_on_termination: true
+    with_items: "{{public_eni.results}}"
+  - name: Attach elastic IPs to public internal ENIs
+    ec2_eip:
+      state: present
+      in_vpc: true
+      release_on_disassociation: true
+      reuse_existing_ip_allowed: true
+      region: "{{region}}"
+      device_id: "{{item.interface.id}}"
+    with_items: "{{public_eni.results}}"
+  when: not public_eni | skipped and public_eni.changed and public_eni.results | length > 0
+# if we're deploying instances with a single NIC, then there's no jumphost,
+# so we should also configure SSH access for these nodes via their private
+# IP address
+- block:
+  - name: Configure local ssh for platform access
+    blockinfile:
+      state: present
+      create: yes
+      insertafter: EOF
+      path: "{{ansible_env.HOME}}/.ssh/config"
+      block: |
+        Host {{instance.private_ip}}
+            Hostname {{instance.public_ip}}
+            User centos
+            IdentityFile {{keyfile_path}}
+            IdentitiesOnly yes
+            StrictHostKeyChecking no
+      marker: "# {mark} ANSIBLE MANAGED BLOCK {{ instance.private_ip }}"
+    with_items: "{{ec2_instances}}"
+    loop_control:
+      loop_var: instance
+    when: not (ec2 | skipped) and (ec2_instances | length) > 0
+  when: not(multi_interface)
+# wait_for doesn't work with a proxy, so we need to ssh and check output
+- name: Wait for instances to be accessible via SSH
+  shell: /bin/sleep 10 && /usr/bin/ssh -i "{{keyfile_path}}" "{{user}}"@"{{instance.private_ip}}" echo DataNexus
+  register: output
+  retries: 24
+  delay: 15
+  until: output.stdout.find('DataNexus') != -1
+  with_items: "{{ec2_instances}}"
+  loop_control:
+    loop_var: instance
+  when: not (ec2 | skipped) and (ec2_instances | length) > 0

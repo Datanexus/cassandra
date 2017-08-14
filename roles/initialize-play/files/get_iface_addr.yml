@@ -1,0 +1,10 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# first, gather up the IP address for the named interface for each of the input
+# hosts (using the facts contained in the 'hostvars' gathered for those hosts)
+- set_fact:
+    lcl_addr: "{{((hostvars[inventory_hostname]['ansible_' + iface_name] | default({})).ipv4 | default({})).address | default('')}}"
+# otherwise, save the address that was gathered as the named fact
+- name: Get IP address of {{iface_name}}
+  set_fact:
+    "{{as_fact | default('iface_addr')}}": "{{lcl_addr}}"

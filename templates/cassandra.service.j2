@@ -1,0 +1,26 @@
+[Unit]
+Description=Apache Cassandra
+Documentation=http://cassandra.apache.org/doc/latest/
+Requires=network.target remote-fs.target
+After=network.target remote-fs.target
+
+[Service]
+Type=simple
+PIDFile=/var/run/cassandra/cassandra.pid
+WorkingDirectory={{cassandra_dir}}
+User={{cassandra_user}}
+Group={{cassandra_group}}
+PermissionsStartOnly=true
+ExecStartPre=-/usr/bin/mkdir /var/run/cassandra
+ExecStartPre=/usr/bin/chown -R {{cassandra_user}}:{{cassandra_group}} /var/run/cassandra/
+ExecStart={{cassandra_dir}}/bin/cassandra -p /var/run/cassandra/cassandra.pid
+
+# When Cassandra stops, it may exit with status 2 - see https://issues.apache.org/jira/browse/CASSANDRA-13030
+# Note that it can still be started again without any issues
+ExecStop={{cassandra_dir}}/bin/nodetool stopdaemon
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

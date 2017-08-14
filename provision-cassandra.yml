@@ -1,0 +1,106 @@
+#!/usr/bin/env ansible-playbook
+#
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# If we're using dynamic provisioning, then create the `cassandra` and
+# `cassandra_seed` host groups
+- name: Create cassandra and cassandra_seed host groups
+  hosts: localhost
+  gather_facts: yes
+  vars_files:
+    - vars/cassandra.yml
+  tasks:
+    # load the 'configuration file', if one was defined, to get any variables
+    # we might need from that file when constructing our host groups
+    - name: Load configuration file
+      include_vars:
+        file: "{{config_file | default('config.yml')}}"
+    # if we're using dynamic provisioning; build the host groups from the
+    # meta-data associated with the matching nodes in the selected cloud
+    - block:
+      # if we're deploying instances in an cloud environment, ensure that there
+      # are an appriately tagged set of nodes already (and launch them if they
+      # don't exist based on the node_map entries for this application)
+      - include_role:
+          name: 'aws'
+        when: cloud is undefined or cloud == 'aws'
+      - include_role:
+          name: 'osp'
+        when: cloud == 'osp'
+      # then, build the seed and non-seed host groups from those nodes
+      - include_role:
+          name: build-app-host-groups
+        vars:
+          host_group_list:
+            - { name: cassandra, role: seed }
+            - { name: cassandra }
+      when: cloud is defined and (cloud == 'aws' or cloud == 'osp')
+
+# If we're dynamically provisioning, then do some final configuration on the
+# VMs that were just launched (assuming that we're not re-using existing VMs)
+- name: Complete OS configuration
+  hosts: cassandra_seed:cassandra
+  gather_facts: yes
+  vars_files:
+    - vars/cassandra.yml
+  tasks:
+    # first, initialize the play
+    - include_role:
+        name: initialize-play
+      vars:
+        gather_facts: false
+        skip_network_restart: true
+    # if this is a cloud deployment and we need to (re)configure nodes...
+    - block:
+      # then run the `preflight` role to finish the configuration of the nodes
+      # that were just allocated
+      - include_role:
+          name: preflight
+        vars:
+          mountpoint: "/data"
+      # and set a fact indicating that we (re)configured nodes in this play
+      - set_fact:
+          configured_nodes: true
+      when:
+        - cloud is defined and (cloud == 'aws' or cloud == 'osp')
+        - ((force_node_reconfig | default(false)) | bool) or not(hostvars['localhost']['matching_instances_found'])
+
+# Start by deploying Cassandra to the nodes in the cassandra_seed host group
+- name: Install/configure servers (seed nodes)
+  hosts: cassandra_seed
+  gather_facts: no
+  vars_files:
+    - vars/cassandra.yml
+  vars:
+    - combined_package_list: "{{ (default_packages|default([])) | union(cassandra_package_list) | union((install_packages_by_tag|default({})).cassandra|default([])) }}"
+    - cassandra_seed_nodes: "{{groups['cassandra_seed']}}"
+  roles:
+    # first, initialize the play by loading any `config_file` that may have
+    # been passed in, restarting the network on the target nodes (if desired),
+    # and determining the `data_iface` and `api_iface` values from the input
+    # `iface_description_array` (if one was passed in)
+    - role: initialize-play
+      skip_network_restart: "{{configured_nodes | default(false)}}"
+    # now that we have all of the facts we need, provision the seed nodes
+    - role: cassandra
+
+# Once the seed nodes have been deployed, repeat the same process to deploy
+# Cassandra to the non-seed nodes (configuring them to talk with the seed
+# nodes that were deployed, above)
+- name: Install/configure servers (non-seed nodes)
+  hosts: cassandra
+  gather_facts: no
+  vars_files:
+    - vars/cassandra.yml
+  vars:
+    - combined_package_list: "{{ (default_packages|default([])) | union(cassandra_package_list) | union((install_packages_by_tag|default({})).cassandra|default([])) }}"
+    - cassandra_seed_nodes: "{{groups['cassandra_seed']}}"
+  roles:
+    # first, initialize the play by loading any `config_file` that may have
+    # been passed in, restarting the network on the target nodes (if desired),
+    # and determining the `data_iface` and `api_iface` values from the input
+    # `iface_description_array` (if one was passed in)
+    - role: initialize-play
+      skip_network_restart: "{{configured_nodes | default(false)}}"
+    # now that we have all of the facts we need, provision the seed nodes
+    - role: cassandra

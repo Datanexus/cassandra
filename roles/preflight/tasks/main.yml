@@ -1,0 +1,128 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+#
+# OS tasks that occur post-boot and pre-appplication installation
+---
+# if we have multiple networks, then add the interface script for
+# the public interface and configure the public and private networks
+- block:
+  - name: Create new ifcfg-{{api_iface}} script
+    copy:
+      src: "/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}"
+      dest: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
+      remote_src: True
+  - name: Replace the device in the new ifcfg-{{api_iface}} script
+    lineinfile: 
+      name: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
+      regexp: '^DEVICE='
+      line: 'DEVICE="{{api_iface}}"'
+  - name: Ensure a default route exists for the {{api_iface}} interface
+    become: true
+    lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="yes"'
+  - name: Remove the default route for the {{data_iface}} interface
+    become: true
+    lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="no"'
+  # restart the network
+  - name: Restart the network
+    become: true
+    service:
+      name: network
+      state: restarted
+  become: true
+  when:
+    - ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'
+    - api_iface is defined and api_iface != data_iface
+# set a fact for containing the name of our block device based on the cloud type
+- set_fact:
+    block_device: /dev/xvdb
+  when: cloud == 'aws'
+- set_fact:
+    block_device: /dev/vdb
+  when: cloud == 'osp'
+- set_fact:
+    mounted_devices: "{{ansible_mounts | map(attribute='device') | list}}"
+# if a data volume was defined and the named block_device is in the list
+# of deviceson the system but is not mounted, then create a filesystem on
+# that device and mount it at the named mount point
+- block:
+  # build a filesystem on that block device
+  - name: Build a filesystem on {{block_device}}
+    command: /usr/sbin/mkfs -t ext4 {{block_device}}
+  # and mount it
+  - name: Mount {{block_device}} as {{mountpoint}}
+    mount:
+      name: "{{mountpoint}}"
+      src: "{{block_device}}"
+      fstype: ext4
+      state: mounted
+  become: true
+  when: data_volume is defined and (block_device.replace('/dev/','') in ansible_devices.keys()) and not(block_device in mounted_devices)
+# configure the local SSH daemon and restart it
+- block:
+  - name: Ensure sshd_config is writeable
+    command: /bin/chattr -i /etc/ssh/sshd_config
+  - name: Ensure sshd listens on provisioning network
+    lineinfile:
+      dest: /etc/ssh/sshd_config
+      regexp: "^#ListenAddress 0.0.0.0"
+      backrefs: yes
+      line: "ListenAddress {{hostvars[inventory_hostname]['ansible_' + data_iface].ipv4.address}}"
+  - name: Restart sshd
+    service:
+       name: sshd
+       state: restarted
+  become: true
+# generate a hostname
+- block:
+  # first generate a new UUID value
+  - name: Generate a UUID
+    shell: /usr/bin/uuidgen | /usr/bin/tr -d \-
+    register: uuid
+  # then use that UUID to set a unique hostname
+  - name: Set hostname actively so rebooting is unnecessary
+    command: /usr/bin/hostnamectl set-hostname {{application}}-{{uuid.stdout}}
+  - name: Set pretty hostname actively so rebooting is unnecessary
+    command: /usr/bin/hostnamectl --pretty set-hostname "{{tenant}} {{application}}"  
+  - name: Set new hostname in /etc/hostname
+    replace:
+      path: /etc/hostname
+      regexp: "{{hostvars[inventory_hostname].ansible_hostname}}.ec2.internal"
+      replace: "{{application}}-{{uuid.stdout}}.localdomain"
+  - name: Set HOSTNAME in /etc/sysconfig/network
+    lineinfile:
+      dest: /etc/sysconfig/network
+      state: present
+      insertafter: EOF
+      line: "HOSTNAME={{application}}-{{uuid.stdout}}.localdomain"
+  - name: Set {{data_iface}} address to new hostname in /etc/hosts
+    lineinfile:
+      dest: /etc/hosts
+      insertafter: EOF
+      # regexp: "^127.0.0.1  localhost localhost.localdomain localhost4 localhost4.localdomain4"
+      # backrefs: yes
+      # line: "127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 {{hostvars[inventory_hostname].ansible_hostname}}"
+      line: "{{hostvars[inventory_hostname]['ansible_' + data_iface].ipv4.address}}    {{application}}-{{uuid.stdout}}.localdomain {{application}}-{{uuid.stdout}} {{application}}"
+  - name: Ensure hostname changes persist after reboot
+    lineinfile:
+      dest: /etc/cloud/cloud.cfg
+      state: present
+      insertafter: EOF
+      line: 'preserve_hostname: true'
+    when:
+      - cloud == 'aws'
+  become: true
+  when:
+    - ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'
+# community CentOS AMI ships with postfix enabled so we need to disable it
+- block:
+  - name: Stop postfix
+    service:
+      name: postfix
+      state: stopped
+    failed_when: false
+  # annnnd remove it
+  - name: Remove postfix
+    package:
+      name: postfix
+      state: absent
+  become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'

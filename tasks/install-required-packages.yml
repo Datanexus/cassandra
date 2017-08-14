@@ -1,0 +1,11 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# install the packages in the input package list from the standard YUM
+# repository
+- name: "Installing {{ combined_package_list }}"
+  package:
+    name: "{{ combined_package_list | join(',') }}"
+    state: present
+  environment: "{{ environment_vars | default({}) }}"
+  become: true
+  when: (combined_package_list | default([])) != []

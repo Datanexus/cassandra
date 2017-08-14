@@ -1,0 +1,14 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+- name: Create cassandra group
+  become: true
+  group:
+    name: "{{cassandra_group}}"
+    system: yes
+- name: Create cassandra user
+  become: true
+  user:
+    name: "{{cassandra_user}}"
+    group: "{{cassandra_group}}"
+    createhome: no
+    system: yes

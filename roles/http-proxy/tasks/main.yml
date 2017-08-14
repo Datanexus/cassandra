@@ -1,0 +1,75 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+#
+# HTTP proxy configuration
+---
+# set the proxy-related variables from the input http_proxy variable (if that
+# variable is defined)
+- name: setting http_proxy environment variables
+  set_fact:
+    proxy_vars:
+      http_proxy: "{{ http_proxy }}"
+      https_proxy: "{{ http_proxy }}"
+      HTTP_PROXY: "{{ http_proxy }}"
+      HTTPS_PROXY: "{{ http_proxy }}"
+  when: http_proxy is defined
+# set the no-proxy-related variables from the input no_proxy variable (if that
+# variable is defined)
+- name: setting no_proxy environment variables
+  set_fact:
+    no_proxy_vars:
+      no_proxy: "{{ no_proxy }}"
+      NO_PROXY: "{{ no_proxy }}"
+  when: no_proxy is defined
+# setup the environment_vars fact based on the no_proxy_vars and proxy_vars
+# dictionaries that we just setup (above)
+- name: Set environment variables
+  set_fact:
+    environment_vars:  "{{ no_proxy_vars | default({}) | combine(proxy_vars | default({})) }}"
+# configure http_proxy and https_proxy environment variables in the login
+# shell for the SSH user based in the http_proxy variable's value (if defined)
+- block:
+  - name: configuring http_proxy
+    lineinfile:
+      dest: "/home/{{ user }}/.bashrc"
+      line: 'export http_proxy="{{ http_proxy }}"'
+      insertafter: "^fi$"
+  - name: configuring https_proxy
+    lineinfile:
+      dest: "/home/{{ user }}/.bashrc"
+      line: 'export https_proxy="{{ http_proxy }}"'
+      insertafter: "^export http_proxy"
+  when: http_proxy is defined
+# configure no_proxy environment variable in the login shell for the SSH user
+# based in the no_proxy variable's value (if defined)
+- name: configuring no_proxy
+  lineinfile:
+    dest: "/home/{{ user }}/.bashrc"
+    line: 'export no_proxy="{{ no_proxy }}"'
+    insertafter: "^export https_proxy"
+  when: no_proxy is defined
+# modify the sudoers file to maintain these environment variable values during
+# a sudo command
+- name: ensure root inherits proxy settings
+  lineinfile:
+    dest: /etc/sudoers
+    line: 'Defaults    env_keep += "http_proxy https_proxy no_proxy"'
+    insertafter: '^Defaults    env_keep \+= "LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY"$'
+  become: true
+  when: http_proxy is defined
+# if we're in a RedHAT or CentOS OS and the proxy_certs_file was defined, then
+# unpacking that file into the appropriate destination and add the uploaded
+# certificates to the list of trusted certificates
+- name: copying and unpacking trusted certificates
+  become: true
+  unarchive:
+    src: "{{ proxy_certs_file }}"
+    dest: /etc/pki/ca-trust/source/anchors
+  when:
+    - proxy_certs_file is defined
+    - ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'
+- name: adding uploaded certificates to list of trusted certs
+  become: true
+  shell: /usr/bin/update-ca-trust
+  when:
+    - proxy_certs_file is defined
+    - ansible_distribution == 'CentOS' or ansible_distribution == 'RedHat'

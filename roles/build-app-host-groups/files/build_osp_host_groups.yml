@@ -1,0 +1,45 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# if this is an OpenStack cloud, then set the facts for the application nodes
+# appropriately; this includes filtering for the application role and/or the
+# cluster ID if either of those parameters were defined; if a role and/or
+# cluster ID was not provided then assume that the value 'none' was used,
+# since this is the default that is used for deployments where a role and/or
+# cluster ID are not necessary
+- set_fact:
+    hg_item_role: "{{host_group_item.role | default('none')}}"
+    hg_item_name: "{{host_group_item.name}}"
+# set the facts for the application nodes appropriately (this includes
+# filtering for the application role if one was provided
+- set_fact:
+    application_nodes: "{{(os_inventory_json | json_query('[\"meta-Application_' + hg_item_name + '\"]')).0}}"
+    role_nodes: "{{(os_inventory_json | json_query('[\"meta-Role_' + hg_item_role + '\"]')).0}}"
+- set_fact:
+    app_nodes: "{{cloud_nodes | intersect(tenant_nodes) | intersect(project_nodes) | intersect(dataflow_nodes) | intersect(domain_nodes) | intersect(application_nodes) | intersect(cluster_nodes) | intersect(role_nodes)}}"
+# if a role was defined as part of this host group item, then run the
+# tasks this block
+- block:
+  # use the input role tag to to set the name we're going to use for the
+  # matching node list we're returning and the name of the host group we're
+  # going to be constructing
+  - set_fact:
+      node_list_name: "{{(hg_item_role == 'none') | ternary((hg_item_name + '_nodes'), (hg_item_name + '_' + hg_item_role + '_nodes'))}}"
+      app_group_name: "{{(hg_item_role == 'none') | ternary(hg_item_name,(hg_item_name + '_' + hg_item_role))}}"
+# now that we have our list of matching "application nodes", set a fact
+# containing that list and create the appropriately named host groups
+- set_fact:
+    "{{node_list_name}}": "{{app_nodes}}"
+- name: Create {{app_group_name}} host group from OpenStack meta-data
+  add_host:
+    name: "{{item}}"
+    groups: "{{app_group_name}},{{node_list_name}}"
+    ansible_ssh_host: "{{(os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.private[].addr') | list).0}}"
+    ansible_ssh_private_key_file: "{{private_key_path}}/{{region}}-{{project}}-{{hg_item_name}}-{{domain}}-private-key.pem"
+  with_items: "{{app_nodes | default([])}}"
+# finally, add the floating IP addresses for nodes in this application group to
+# the `osp_floating_ip` list (this fact currently is not used, but it was used
+# in the past so we still build it)
+- name: Add floating IP addresses to osp_floating_ip for the {{app_group_name}} nodes
+  set_fact:
+    osp_floating_ip: "{{(osp_floating_ip | default({})) | combine({item: (os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.public') | selectattr('OS-EXT-IPS:type', 'equalto', 'floating') | map(attribute='addr') | list).0})}}"
+  with_items: "{{app_nodes | default([])}}"

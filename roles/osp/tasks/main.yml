@@ -1,0 +1,55 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+---
+# Launch VMs if they aren't already running; to do so, we first need to
+# determine the list of roles used in a deployment for this application;
+# start by selecting the node map entries for this application
+- set_fact:
+    node_map_entries: "{{node_map | selectattr('application', 'equalto', application) | list}}"
+# then build a unique list of roles from those entries
+- set_fact:
+    roles_list: "{{node_map_entries | map(attribute='role') | reject('undefined') | unique | list}}"
+# the result should be the same length as the number of entries; if it's not,
+# then some of the entries had no defined role (so a default value of 'none'
+# should be added to the `roles_list` we just constructed, above)
+- set_fact:
+    application_roles: "{{((roles_list | length) == (node_map_entries | length)) | ternary(roles_list, roles_list + ['none'])}}"
+# If we're running this command for to build a cluster in OpenStack, then use
+# the`openstack.py` command to gather the dynamic inventory information that
+# we need to build our application host groups
+- name: Run openstack command to gather inventory information
+  shell: "{{role_path}}/utils/openstack.py --list"
+  register: os_inventory_output
+  run_once: true
+- set_fact:
+    os_inventory_json: "{{os_inventory_output.stdout | from_json}}"
+# then build lists of matching nodes based on the defined cloud, tenant, project
+# dataflow, domain, and cluster
+- set_fact:
+    cloud_nodes: "{{(os_inventory_json | json_query('[\"meta-Cloud_' + cloud + '\"]')).0}}"
+    tenant_nodes: "{{(os_inventory_json | json_query('[\"meta-Tenant_' + tenant + '\"]')).0}}"
+    project_nodes: "{{(os_inventory_json | json_query('[\"meta-Project_' + project + '\"]')).0}}"
+    dataflow_nodes: "{{(os_inventory_json | json_query('[\"meta-Dataflow_' + (dataflow | default('none')) + '\"]')).0}}"
+    domain_nodes: "{{(os_inventory_json | json_query('[\"meta-Domain_' + domain + '\"]')).0}}"
+    application_nodes: "{{(os_inventory_json | json_query('[\"meta-Application_' + application + '\"]')).0}}"
+    cluster_nodes: "{{(os_inventory_json | json_query('[\"meta-Cluster_' + (cluster | default('a')) + '\"]')).0}}"
+# and build a list of the instances that match the input roles from the
+# matching `node_map` entries
+- set_fact:
+    role_nodes: "{{(role_nodes | default([])) + (os_inventory_json | json_query('[\"meta-Role_' + item + '\"]')).0}}"
+  with_items: "{{application_roles}}"
+# now that we've built our lists of matching nodes, check to see if we have
+# any instances that match all of our input tags; we also set a few facts here
+# that are used when launching instances (below) if no matching nodes are found
+- set_fact:
+    matching_instances: "{{cloud_nodes | intersect(tenant_nodes) | intersect(project_nodes) | intersect(dataflow_nodes) | intersect(domain_nodes) | intersect(application_nodes) | intersect(cluster_nodes) | intersect(role_nodes)}}"
+- set_fact:
+    matching_instances_found: "{{not (matching_instances | length) == 0}}"
+    root_volume_default: "{{(data_volume is defined) | ternary(11, 40)}}"
+    multi_interface: "{{external_subnet is defined and external_subnet != internal_subnet}}"
+- set_fact:
+    external_subnet: "{{internal_subnet}}"
+  when: external_subnet is undefined
+# if we didn't find any matching instances, then launch a set of VMs that are
+# tagged with the input tags
+- include: launch-vms.yml static=no        
+  when: not matching_instances_found

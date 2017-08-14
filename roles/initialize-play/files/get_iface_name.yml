@@ -1,0 +1,14 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# if what was passed in was a 'name' description, then returned
+# the name of the interface itself (the 'val' field in the description)
+- set_fact:
+    "{{iface_description.as_var}}": "{{iface_description.val}}"
+  when: iface_description.type == 'name'
+# otherwise, if the input `val` is a CIDR block, return name of the first
+# interface that has an IP address that value
+- set_fact:
+    matching_address_list: "{{lcl_iface_addresses | ipaddr(iface_description.val)}}"
+- set_fact:
+    "{{iface_description.as_var}}": "{{(matching_address_list == []) | ternary('', lcl_iface_names[lcl_iface_addresses.index(matching_address_list.0 | default(''))])}}"
+  when: iface_description.type == 'cidr'

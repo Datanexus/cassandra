@@ -1,0 +1,202 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+#
+# launch an set of OSP virtual machines
+---
+# first gather a few facts from the defined private subnet
+- name: gathering facts for {{private_subnet}} in the {{tenant}} cloud
+  os_networks_facts:
+    cloud: "{{tenant}}"
+    filters:
+      id: "{{internal_uuid}}"
+- set_fact:
+    private_management_subnet_id: "{{openstack_networks.0.id}}"
+  when:
+    - openstack_networks is defined
+    - openstack_networks.skipped is not defined
+# create a set of security groups; the first for SSH access to the machines
+# in this project on the internal_subnet via the corresponding jumphost
+- name: Create a project-specific SSH security group
+  os_security_group:
+    cloud: "{{tenant}}"
+    state: present
+    name: "{{project}}_ssh"
+    description: "ssh ingress and unrestricted egress rules (ansible)"
+  register: dnsg_ssh
+- name: Add ports for the {{dnsg_ssh.secgroup.description}}
+  os_security_group_rule:
+    cloud: "{{tenant}}"
+    security_group: "{{dnsg_ssh.id}}"
+    protocol: tcp
+    port_range_min: 22
+    port_range_max: 22
+    remote_ip_prefix: "{{internal_subnet}}"
+# and two more for the application-specific rules that are needed to provide
+# access to the services that the application being deployed provides
+- block:
+  - name: Get list of rules that apply to the internal (and external?) subnets
+    set_fact:
+      internal_rules: "{{(multi_interface | bool) | ternary((application_sg_rules | selectattr('cidr_ip', 'equalto', (internal_subnet | default(''))) | list), application_sg_rules + [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ip': '0.0.0.0/0'}])}}"
+      external_rules: "{{(multi_interface | bool) | ternary((application_sg_rules | selectattr('cidr_ip', 'equalto', (external_subnet | default(''))) | list), [])}}"
+      internal_sg_name: "{{(multi_interface | bool) | ternary((project + '_' + application + '_internal'), (project + '_' + application))}}"
+      external_sg_name: "{{(multi_interface | bool) | ternary((project + '_' + application + '_external'), '')}}"
+  # put together a string containing a comma-separated set of names for the
+  # security groups we'll be creating (below); will use this string when
+  # creating VM instances using the `os_server` module (again, below)
+  - set_fact:
+      sg_names_str: "{{(multi_interface | bool) | ternary(project + '_ssh,' + internal_sg_name + ',' + external_sg_name, project + '_ssh,' + internal_sg_name)}}"
+  # first, the internal security group
+  - name: Create {{internal_sg_name}} security group
+    os_security_group:
+      cloud: "{{tenant}}"
+      state: present
+      name: "{{internal_sg_name}}"
+      description: "{{application}} ingress and unrestricted egress rules (ansible)"
+    register: sg_application_internal
+    when: internal_rules | length > 0
+  - name: Add ports for the {{sg_application_internal.secgroup.description}}
+    os_security_group_rule:
+      cloud: "{{tenant}}"
+      security_group: "{{sg_application_internal.id}}"
+      protocol: "{{rule.proto}}"
+      port_range_min: "{{rule.from_port}}"
+      port_range_max: "{{rule.to_port}}"
+      remote_ip_prefix: "{{rule.cidr_ip}}"
+    with_items: "{{internal_rules}}"
+    loop_control:
+      loop_var: rule
+  # followed by the external security group (if an external subnet differeent
+  # from the internal subnet was defined)
+  - name: Creating {{project}}_{{application}}_external security group
+    os_security_group:
+      cloud: "{{tenant}}"
+      state: present
+      name: "{{project}}_{{application}}_external"
+      description: "external {{application}} ingress and unrestricted egress rules (ansible)"
+    register: sg_application_external
+    when: multi_interface
+  - name: Add ports for the {{sg_application_internal.secgroup.description}}
+    os_security_group_rule:
+      cloud: "{{tenant}}"
+      security_group: "{{sg_application_external.id}}"
+      protocol: "{{rule.proto}}"
+      port_range_min: "{{rule.from_port}}"
+      port_range_max: "{{rule.to_port}}"
+      remote_ip_prefix: "{{rule.cidr_ip}}"
+    with_items: "{{external_rules}}"
+    loop_control:
+      loop_var: rule
+    when: multi_interface
+  when: application_sg_rules is defined
+# construct the path to and names of the keyfiles we'll be using
+- shell: python -c 'import os; print os.path.abspath("{{private_key_path}}")'
+  register: key_path_out
+- set_fact:
+    private_keyfile_path: "{{key_path_out.stdout}}/{{region}}-{{project}}-{{application}}-{{domain}}-private-key.pem"
+    public_keyfile_path: "{{key_path_out.stdout}}/{{region}}-{{project}}-{{application}}-{{domain}}-public-key.pem"
+# check for an exisging key in our private_key_path
+- name: Check for existing {{public_keyfile_path}} file
+  stat: path="{{public_keyfile_path}}"
+  register: existing_key
+# if there is an existing key, use it
+- block: 
+  - name: Use existing public key at {{public_keyfile_path}}
+    os_keypair:
+      cloud: "{{tenant}}"
+      state: present
+      name: "{{region}}-{{project}}-{{application}}-{{domain}}"
+      public_key_file: "{{public_keyfile_path}}" 
+    register: old_keypair
+  - set_fact: keypair="{{old_keypair}}"
+  when: existing_key.stat.exists
+# otherwise, create a new key pair to use instead
+- block:
+  - name: Create new {{region}}-{{project}}-{{application}}-{{domain}} key pair
+    os_keypair:
+      cloud: "{{tenant}}"
+      state: present
+      name: "{{region}}-{{project}}-{{application}}-{{domain}}"
+    register: new_keypair
+  - set_fact: keypair="{{new_keypair}}"
+  - name: Saving new private key to {{private_keyfile_path}}
+    copy:
+      dest: "{{private_keyfile_path}}"
+      content: "{{keypair.key.private_key}}"
+      mode: 0400
+  - name: Saving new public key to {{public_keyfile_path}}
+    copy:
+      dest: "{{public_keyfile_path}}"
+      content: "{{keypair.key.public_key}}"
+      mode: 0400
+  when: not(existing_key.stat.exists)
+# from the matching `node_map` entries, build up a list of the role for each
+# node we'll be creating; first set  acouple of facts we'll need in the next
+# few tasks
+- set_fact:
+    node_role_list: []
+    nic_list: "{{(external_uuid is defined) | ternary([{'net-id': internal_uuid}, {'net-id': external_uuid}], [{'net-id': internal_uuid}])}}"
+- name: Build up a list of roles (per node being created)
+  include: build-role-list.yml static=no
+  with_items: "{{node_map | selectattr('application', 'equalto', application) | list}}"
+  loop_control:
+    loop_var: node_map_entry
+# Create data volumes needed for the instances being created
+- name: Create required data volumes {{data_volume}}GB
+  os_volume:
+    state: present
+    cloud: "{{tenant}}"
+    size: "{{data_volume}}"
+    volume_type: "{{block_pool}}"
+    display_name: "{{project}}_{{application}}_{{node_role_list[item | int]}}_{{cluster | default('a')}}_{{item}}"
+  with_sequence: start=0 end="{{(node_role_list | length) - 1}}"
+  when: data_volume is defined
+# openstack instance names must be unique, so we need to add a sequence number to each name
+- name: Launch instances
+  os_server:
+    state: present
+    cloud: "{{tenant}}"
+    name: "{{cloud}}_{{tenant}}_{{project}}_{{dataflow | default('none')}}_{{application}}_{{domain}}_{{cluster | default('a')}}_{{item}}"
+    meta:
+      Name: "{{cloud}}_{{tenant}}_{{project}}_{{dataflow | default('none')}}_{{application}}_{{domain}}_{{cluster | default('a')}}"
+      Tenant: "{{tenant}}"
+      Project: "{{project}}"
+      Cloud: "{{cloud}}"
+      Domain: "{{domain}}"
+      Application: "{{application}}"
+      Cluster: "{{cluster | default('a')}}"
+      Role: "{{node_role_list[item | int]}}"
+      Dataflow: "{{dataflow | default('none')}}"    
+    region_name: "{{region}}"
+    availability_zone: "{{zone}}"
+    image: "{{image}}"
+    key_name: "{{keypair.key.name}}"
+    timeout: 200
+    auto_ip: yes
+    reuse_ips: true
+    flavor: "{{type}}"
+    nics: "{{nic_list}}"
+    security_groups: "{{sg_names_str}}"
+    volumes: "{{project}}_{{application}}_{{node_role_list[item | int]}}_{{cluster | default('a')}}_{{item}}"
+  register: osp_out
+  with_sequence: start=0 end="{{(node_role_list | length) - 1}}"
+# setup a floating IP address for each instance from the float_pool
+- name: assigning floating IPs to instances
+  os_floating_ip:
+    state: present
+    reuse: true
+    cloud: "{{tenant}}"
+    server: "{{item.server.id}}"
+    fixed_address: "{{item.server.addresses.public.0['addr']}}"
+    network: "{{float_pool}}"
+    nat_destination: "{{external_uuid}}"
+  with_items: "{{osp_out.results}}"
+  register: 
+  when: not osp_out | skipped and osp_out.changed and osp_out.results | length > 0
+# wait_for doesn't work with a proxy, so we need to ssh and check output
+- name: Wait for instances to be accessible via SSH
+  shell: /bin/sleep 10 && /usr/bin/ssh -i "{{private_keyfile_path}}" "{{user}}@{{item.server.addresses.private.0['addr']}}" echo DataNexus
+  register: output
+  retries: 24
+  delay: 15
+  until: output.stdout.find('DataNexus') != -1
+  with_items: "{{osp_out.results}}"
+  when: not osp_out | skipped and osp_out.changed and osp_out.results | length > 0

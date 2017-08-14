@@ -1,0 +1,38 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# setup the application host groups based on the defined tags; first construct
+# a few facts we'll be using later in the playbook
+- set_fact:
+    hg_item_role: "{{host_group_item.role | default('none')}}"
+    hg_item_name: "{{host_group_item.name}}"
+- set_fact:
+    node_list_name: "{{(hg_item_role == 'none') | ternary((hg_item_name + '_nodes'), (hg_item_name + '_' + hg_item_role + '_nodes'))}}"
+    app_group_name: "{{(hg_item_role == 'none') | ternary(hg_item_name,(hg_item_name + '_' + hg_item_role))}}"
+# then, gather the facts that are used to create our host group from the
+# `ec2_remote_facts` module
+- name: Gather facts for the hosts that match our filter
+  ec2_remote_facts:
+    region: "{{region}}"
+    filters:
+      instance-state-name: running
+      "tag:Project": "{{project}}"
+      "tag:Tenant": "{{tenant}}"
+      "tag:Dataflow": "{{dataflow | default('none')}}"
+      "tag:Application": "{{hg_item_name}}"
+      "tag:Domain": "{{domain}}"
+      "tag:Cluster": "{{cluster | default('a')}}"
+      "tag:Role": "{{hg_item_role}}"
+  register: matching_instances
+# construct a list of matching applications from the matching_instances output
+- set_fact:
+    app_nodes: "{{matching_instances.instances | map(attribute='private_ip_address') | list}}"
+# set a fact containing the matching "application nodes"
+- set_fact:
+    "{{node_list_name}}": "{{app_nodes}}"
+# and build our host group
+- name: building {{app_group_name}} host group
+  add_host:
+    hostname: "{{item}}"
+    groupname: "{{app_group_name}},{{node_list_name}}"
+    ansible_ssh_private_key_file: "{{private_key_path}}/{{region}}-{{project}}-{{hg_item_name}}-{{domain}}-private-key.pem"
+  with_items: "{{app_nodes | default([])}}"

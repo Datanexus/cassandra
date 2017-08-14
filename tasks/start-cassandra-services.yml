@@ -1,0 +1,8 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+- name: Start cassandra services
+  become: true
+  service:
+    name: cassandra
+    state: restarted
+  when: start_cassandra is defined and start_cassandra

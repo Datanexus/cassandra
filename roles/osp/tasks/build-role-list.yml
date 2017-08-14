@@ -1,0 +1,7 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+#
+# launch an set of OSP virtual machines based on an input count and role
+---
+- set_fact:
+    node_role_list: "{{(node_role_list | default([])) + [node_map_entry.role | default('none')]}}"
+  with_sequence: "count={{node_map_entry.count | default(1)}}"

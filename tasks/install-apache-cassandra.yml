@@ -1,0 +1,85 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# First, setup a couple of facts so that can test whether we're uploading the Cassandra
+# distribution from a file local to the Ansible node or downloading the distribution
+# from a URL
+- set_fact:
+    install_from_dir: "{{not(local_cassandra_file is undefined or local_cassandra_file is none or local_cassandra_file | trim == '')}}"
+- set_fact:
+    install_from_url: "{{not(cassandra_url is undefined or cassandra_url is none or cassandra_url | trim == '')}}"
+  when: not(install_from_dir)
+# set a fact containing the appropriate (private) IP addresses of the cassandra_seed_nodes
+# (if a list of cassandra_seed_nodes was passed in)
+- set_fact:
+    cassandra_data_ips: "{{(cassandra_seed_nodes | default([])) | map('extract', hostvars, [('ansible_' + data_iface), 'ipv4', 'address']) | list}}"
+  when: cassandra_seed_nodes != []
+- set_fact:
+    cassandra_data_ips: "{{cassandra_data_ips | default([data_addr])}}"
+# If we're installing from a URL, then download the Cassandra
+# distribution from that URL
+- block:
+  - name: Download Cassandra distribution to /tmp
+    become: true
+    get_url:
+      url: "{{cassandra_url}}"
+      dest: /tmp
+      mode: 0644
+      validate_certs: no
+    environment: "{{environment_vars | default({})}}"
+  - set_fact:
+      cassandra_filename: "{{cassandra_url | basename}}"
+  when: install_from_url is defined and install_from_url
+# If we're installing from a local file, then upload the Cassandra
+# distribution from that local file
+- block:
+  - name: Upload Cassandra distribution from a local directory to /tmp
+    copy:
+      src: "{{local_cassandra_file}}"
+      dest: "/tmp"
+      mode: 0644
+  - set_fact:
+      cassandra_filename: "{{local_cassandra_file | basename}}"
+  when: install_from_dir
+# regardless of which option was used, we need to unpack the
+# distribution file and setup the basic configuration options
+# using a template
+- block:
+  # create the directory Cassandra will be unpacked into
+  - name: Create Cassandra home directory {{cassandra_dir}}
+    file:
+      path: "{{cassandra_dir}}"
+      state: directory
+      mode: 0755
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+  # unpack the distribution file
+  - name: Unpack cassandra distribution into {{cassandra_dir}}
+    unarchive:
+      copy: no
+      src: "/tmp/{{cassandra_filename}}"
+      dest: "{{cassandra_dir}}"
+      extra_opts: [ --strip-components=1 ]
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+  # create the data directory
+  - name: Create Cassandra data directory {{cassandra_data_dir}}
+    file:
+      path: "{{cassandra_data_dir}}"
+      state: directory
+      mode: 0755
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+  # create the logs directory
+  - name: Ensure Cassandra GC logs directory exists
+    file:
+      path: "{{cassandra_data_dir}}/logs"
+      state: directory
+      mode: 0755
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+  # and cleanup the file that was downloaded
+  - name: Cleanup temporary files
+    file:
+      state: absent
+      path: "/tmp/{{cassandra_filename}}"
+  become: true

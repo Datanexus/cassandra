@@ -1,0 +1,103 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# Variables that are necessary for all deployments of
+# Apache Cassandra
+application: cassandra
+
+cassandra_dir: /opt/apache-cassandra
+cassandra_data_dir: /data
+cassandra_package_list: ["java-1.8.0-openjdk", "java-1.8.0-openjdk-devel"]
+
+cassandra_group: cassandra
+cassandra_user: cassandra
+
+# the version and distribution URL
+cassandra_version: "3.11.0"
+cassandra_url: "http://www-us.apache.org/dist/cassandra/{{ cassandra_version }}/apache-cassandra-{{ cassandra_version }}-bin.tar.gz"
+
+# path used to access private keys (defaults to the playbook directory)
+private_key_path: "{{playbook_dir}}"
+
+# flag that can be set to start the cassandra service when the playbook
+# finishes running (defaults to true)
+start_cassandra: true
+
+# flag that can be used to set nodes to 'auto_bootstrap' when joining the
+# cluster (defaults to false)
+auto_bootstrap: false
+
+# a suffix used to create a unique cluster name (if defined)
+# cluster_name_suffix: ""
+
+# Default values that are expected to be overridden
+cassandra_cluster_name: "Test Cluster"
+
+cassandra_rackdc_dc_name: dc1
+cassandra_rackdc_rack_name: rack1
+
+cassandra_keystore_password: "cassandra"
+cassandra_truststore_password: "cassandra"
+
+# if this heap size is increased, then the node type (defined as `t2.large`
+# in the default configuration file (`config.yml`), must also be adjusted
+cassandra_jvm_heaps_size: 4G
+
+# this variable defines the default cluster that will be created when deploying
+# to an AWS or OpenStack environment; the value defined here will result in a
+# six-node cluster with three seed nodes and three non-seed nodes
+node_map:
+  - { application: cassandra, role: seed, count: 3 }
+  - { application: cassandra, role: none, count: 3 }
+
+# and define a set of application-specific security group rules; this list of
+# dictionary entries is used when setting up an application-specific security
+# on the network used by this application; the rules defined here allow for:
+#
+#  - SSH access to the nodes from any network
+#  - internode communication on port 7000 (cluster communication)
+#  - internode communication on port 7001 (SSL cluster communication)
+#  - internode communication on port 7199 (JMX monitoring)
+#  - client connections on port 9042 (the Cassandra client port)
+#  - client connections on port 9160 (the Cassandra thrift client port)
+#  - client connections on port 9142 (the native transport port)
+#
+# this set of rules should, more than likely, not be overridden; if it is
+# overridden, then care should be taken to at least maintain this default list
+# of application-specific security group rules or the nodes in the cluster may
+# not be able to communicate with each other
+application_sg_rules:
+  - { proto: tcp, from_port: 7000, to_port: 7000, cidr_ip: "{{internal_subnet}}" }
+  - { proto: tcp, from_port: 7001, to_port: 7001, cidr_ip: "{{internal_subnet}}" }
+  - { proto: tcp, from_port: 7199, to_port: 7199, cidr_ip: "{{internal_subnet}}" }
+  - { proto: tcp, from_port: 9042, to_port: 9042, cidr_ip: "{{external_subnet}}" }
+  - { proto: tcp, from_port: 9160, to_port: 9160, cidr_ip: "{{external_subnet}}" }
+  - { proto: tcp, from_port: 9142, to_port: 9142, cidr_ip: "{{external_subnet}}" }
+
+# the following defaults are reasonable defaults that should only be overridden
+# with due caution and when necessary
+cassandra_swap_mode: "off"
+
+cassandra_number_tokens: 32
+cassandra_authenticator: AllowAllAuthenticator
+cassandra_authorizer: AllowAllAuthorizer
+cassandra_concurrent_reads: 32
+cassandra_concurrent_writes: 32
+cassandra_concurrent_counter_writes: 32
+cassandra_concurrent_materialized_view_writes: 32
+cassandra_memtable_offheap_space_in_mb: 2048
+cassandra_trickle_fsync: true
+cassandra_listen_comms_method: "address: localhost"
+cassandra_start_rpc: false
+cassandra_rpc_comms_method: "address: localhost"
+cassandra_rpc_server_type: sync
+cassandra_rpc_max_threads: 128
+cassandra_compaction_throughput_mb_per_sec: 0
+cassandra_endpoint_snitch: GossipingPropertyFileSnitch
+cassandra_internode_encryption: none
+
+cassandra_jmxremote_enabled: no
+cassandra_jmxremote_protocols: TCP
+cassandra_jmxremote_ciphers: "SSL_RSA_WITH_RC4_128_MD5, SSL_RSA_WITH_RC4_128_SHA,SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA"
+
+cassandra_keystore_dir: "{{cassandra_dir}}/conf/.keystore"
+cassandra_truststore_dir: "{{cassandra_dir}}/conf/.truststore"

@@ -1,0 +1,46 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved.
+---
+# first, determine the list of roles used in a deployment for this application;
+# start by selecting the node map entries for this application
+- set_fact:
+    node_map_entries: "{{node_map | selectattr('application', 'equalto', application) | list}}"
+# then build a unique list of roles from those entries
+- set_fact:
+    roles_list: "{{node_map_entries | map(attribute='role') | reject('undefined') | unique | list}}"
+# the result should be the same length as the number of entries; if it's not,
+# then some of the entries had no defined role (so a default value of 'none'
+# should be added to the `roles_list` we just constructed, above)
+- set_fact:
+    application_roles: "{{((roles_list | length) == (node_map_entries | length)) | ternary(roles_list, roles_list + ['none'])}}"
+# Launch AMIs if they aren't already running
+- ec2_remote_facts:
+    region: "{{region}}"
+    filters:
+      instance-state-name: running
+      "tag:Tenant": "{{tenant}}"
+      "tag:Project": "{{project}}"
+      "tag:Dataflow": "{{dataflow | default('none')}}"
+      "tag:Application": "{{application}}"
+      "tag:Domain": "{{domain}}"
+      "tag:Role": "{{role | default('none')}}"
+      "tag:Cluster": "{{cluster | default('a')}}"
+  with_items: "{{application_roles}}"
+  register: remote_facts_out
+# set a few facts we'll need during the playbook run (including a flag that
+# indicates whether or not we found instances that were already tagged with
+# the input tags and a default size for the root volume if a size was not
+# provided for a second, data volume...the root volume size will default to
+# 11GB if a data_volume is defined or 40GB if it is not)
+- set_fact:
+    matching_instances: "{{remote_facts_out.results | sum(attribute='instances', start=[]) | list}}"
+- set_fact:
+    matching_instances_found: "{{not (matching_instances | length) == 0}}"
+    root_volume_default: "{{(data_volume is defined) | ternary(11, 40)}}"
+    multi_interface: "{{external_subnet is defined and external_subnet != internal_subnet}}"
+- set_fact:
+    external_subnet: "{{internal_subnet}}"
+  when: external_subnet is undefined
+# if we didn't find any matching instances that are running, then
+# launch a set of VMs with those tags
+- include: launch-amis.yml static=no        
+  when: not matching_instances_found

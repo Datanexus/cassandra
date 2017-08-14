@@ -1,0 +1,69 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# first, create a new set of configuration files from the input templates
+- block:
+  # backup the default configuration files
+  - name: Backup configuration files
+    copy:
+      src: "{{cassandra_dir}}/conf/{{item}}"
+      dest: "{{cassandra_dir}}/conf/.{{item}}.bak"
+      remote_src: true
+      mode: 0644
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+    with_items:
+      - jvm.options
+      - cassandra.yaml
+      - cassandra-rackdc.properties
+  # create the new configuration files
+  - name: Copy new configuration files
+    template:
+      src: "{{item}}.j2"
+      dest: "{{cassandra_dir}}/conf/{{item}}"
+      mode: 0644
+      owner: "{{cassandra_user}}"
+      group: "{{cassandra_group}}"
+    with_items:
+      - jvm.options
+      - cassandra.yaml
+      - cassandra-rackdc.properties
+  become: true
+  become_user: "{{cassandra_user}}"
+# if we're using dynamic inventory, then redefine the cluster name based on the
+# input tags
+- block:
+  - name: Setup string values for dataflow, cluster, and cluster name suffix
+    set_fact:
+      dataflow_val: "{{dataflow | default('none')}}"
+      cluster_val: "{{cluster_name_suffix | default('none')}}"
+      cluster_name_suffix_val: "{{cluster_name_suffix | default('')}}"
+  - set_fact:
+      dataflow_strval: "{{(dataflow_val == 'none') | ternary('','-' + dataflow_val)}}"
+      cluster_strval: "{{(cluster_val == 'none') | ternary('','-' + cluster_val)}}"
+      cluster_name_suffix_strval: "{{(cluster_name_suffix_val == '') | ternary('','-' + cluster_name_suffix_val)}}"
+  - name: Generate a unique cassandra_cluster_name if using dynamic inventory
+    set_fact:
+      cassandra_cluster_name: "{{tenant}}-{{project}}{{dataflow_strval}}-{{domain}}{{cluster_strval}}{{cluster_name_suffix_strval}}"
+  when: cloud is defined and (cloud == 'aws' or cloud == 'osp')
+# and, finally, configure the last few parameters that are needed to setup our
+# new cluster (if there is more than one input node)
+- block:
+  - name: When creating a cluster, set RPC/listen addresses and auto_bootstrap value
+    lineinfile:
+      dest: "{{cassandra_dir}}/conf/cassandra.yaml"
+      regexp: "{{item.pattern}}"
+      line: "{{item.key}}: {{item.value}}"
+      state: present
+    with_items:
+      - { pattern: "^listen_address:", key: "listen_address", value: "{{data_addr}}" }
+      - { pattern: "^# broadcast_address:", key: "broadcast_address", value: "{{data_addr}}" }
+      - { pattern: "^rpc_address:", key: "rpc_address", value: "{{api_addr}}" }
+      - { pattern: "^auto_bootstrap:", key: "auto_bootstrap", value: "{{(auto_bootstrap | default(false)) | lower}}" }
+  - name: Set cluster name (to default if not overridden)
+    lineinfile:
+      dest: "{{cassandra_dir}}/conf/cassandra.yaml"
+      regexp: "^cluster_name:"
+      line: "cluster_name: {{cassandra_cluster_name}}"
+      state: present
+  become: true
+  become_user: "{{cassandra_user}}"

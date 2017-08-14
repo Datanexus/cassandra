@@ -1,0 +1,76 @@
+# (c) 2017 DataNexus Inc.  All Rights Reserved
+---
+# first, load the config file (defaults to `config.yml` if not specified);
+# this will initialize the variables used in our playbook (and override any
+# values from the 'vars/{{application}}.yml' file that are redefined there)
+- name: Load configuration file
+  include_vars:
+    file: "{{config_file | default('config.yml')}}"
+# now that we've loaded the configuration file, ensure that a value is set
+# for the external_subnet parameter
+- set_fact:
+    external_subnet: "{{internal_subnet}}"
+  when: external_subnet is undefined
+# and define an interface description array based on the the internal and
+# external subnets that have been defined and the variable names that are
+# used during the playbook run (the `data_iface` and `api_iface` variables)
+- set_fact:
+    iface_description_array:
+      - { type: 'cidr', val: "{{internal_subnet}}", as_var: 'data_iface'}
+      - { type: 'cidr', val: "{{external_subnet}}", as_var: 'api_iface'}
+# then, restart the network (unless the skip_network_restart was set)
+- name: Ensure the network interfaces are up on our input node(s)
+  service:
+    name: network
+    state: restarted
+  become: true
+  when: not (skip_network_restart is defined or skip_network_restart)
+# and gather some facts about our input node(s)
+- name: Gather facts from the input node(s)
+  setup:
+  when: gather_facts | default(true)
+# next, get a list of the network names (and the corresponding list of network
+# addresses) from the facts associated with each of the input nodes
+- set_fact:
+    lcl_host_facts: "{{hostvars[inventory_hostname]}}"
+    lcl_iface_info_keys: "{{hostvars[inventory_hostname]['ansible_interfaces'] | map('regex_replace', '^(.*)$', 'ansible_\\1' ) | list}}"
+- set_fact:
+    lcl_iface_names: "{{lcl_host_facts['ansible_interfaces']}}"
+    lcl_iface_addresses: "{{lcl_iface_info_keys | map('extract', lcl_host_facts, ['ipv4', 'address']) | map('regex_replace', 'undefined', '') | list}}"
+# then, if a set of interface descriptions were passed in, set the appropriate
+# facts based on the contents of each of the interface description values
+# (the values set will depend on the 'as_var' field in each of the interface
+# description values, while the value that type is set to will depend on the
+# 'type' in each of those values; currently either 'cidr' or 'name' values
+# are supported for the 'type' field)
+- include: "{{role_path}}/files/get_iface_name.yml"
+  static: no
+  with_items: "{{iface_description_array}}"
+  loop_control:
+    loop_var: iface_description
+  when: not (iface_description_array is undefined)
+# finally, get values for the addresses of the `data_iface` and `api_iface`
+# (if defined)
+- include: "{{role_path}}/files/get_iface_addr.yml"
+  static: no
+  vars:
+    iface_name: "{{data_iface}}"
+    as_fact: "data_addr"
+  when: (data_iface | default('')) != ''
+# if we weren't able to find a matching api_iface (because it doesn't have an
+# IP address assigned to it yet), then take the `ansible_interfaces` value that
+# isn't the loopback interface and isn't the `data_iface` value found (above)
+- set_fact:
+    api_iface: "{{(lcl_iface_names | reject('equalto', 'lo') | reject('equalto', data_iface) | list).0}}"
+  when: api_iface == ''
+- include: "{{role_path}}/files/get_iface_addr.yml"
+  static: no
+  vars:
+    iface_name: "{{api_iface}}"
+    as_fact: "api_addr"
+  when: (api_iface | default('')) != ''
+# and setup the nodes to use the defined web proxy (if one is defined via a set
+# of extra variables or through a set of environment variables in the shell
+# that the playbook command is being run from)
+- include_role:
+    name: http-proxy

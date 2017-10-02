@@ -7,10 +7,17 @@
   include_vars:
     file: "{{config_file | default('config.yml')}}"
 # now that we've loaded the configuration file, ensure that a value is set
-# for the external_subnet parameter
-- set_fact:
-    external_subnet: "{{internal_subnet}}"
+# for the internal_subnet parameter by setting it to the same value as the
+# external_subnet if it is undefined; if the external_subnet parameter is
+# undefined, then it's an error
+- name: Ensure that external_subnet is defined
+  fail:
+    msg: "The external_subnet parameter must be defined"
+  run_once: true
   when: external_subnet is undefined
+- set_fact:
+    internal_subnet: "{{external_subnet}}"
+  when: internal_subnet is undefined
 # and define an interface description array based on the the internal and
 # external subnets that have been defined and the variable names that are
 # used during the playbook run (the `data_iface` and `api_iface` variables)

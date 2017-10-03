@@ -131,7 +131,7 @@
   stat: path="{{keyfile_path}}"
   register: existing_key
 # if there is an existing key, use it
-- block: 
+- block:
   - name: Generate public key from existing {{region}}-{{project}}-{{application}}-{{domain}}-private-key.pem
     command: "/usr/bin/ssh-keygen -f {{keyfile_path}} -y"
     register: public_key_from_pem
@@ -140,7 +140,7 @@
       region: "{{region}}"
       state: present
       name: "{{region}}-{{project}}-{{application}}-{{domain}}"
-      key_material: "{{public_key_from_pem.stdout}}" 
+      key_material: "{{public_key_from_pem.stdout}}"
     register: old_keypair
   - set_fact: keypair="{{old_keypair}}"
   when: existing_key.stat.exists
@@ -162,7 +162,7 @@
 - name: Launch AMIs
   ec2:
     key_name: "{{keypair.key.name}}"
-    group_id: 
+    group_id:
       - "{{sg_ssh.group_id}}"
       - "{{sg_application_internal.group_id}}"
     instance_type: "{{type | default('t2.micro')}}"
@@ -283,6 +283,22 @@
       loop_var: instance
     when: not (ec2 | skipped) and (ec2_instances | length) > 0
   when: not(multi_interface)
+# construct the `app_group_name_list` and `node_list_name_list` lists from the
+# `application_roles` list
+- set_fact:
+    node_list_name_list: "{{(node_list_name_list | default([])) + [((instance.tags.Role == 'none') | ternary((application + '_nodes'), (application + '_' + instance.tags.Role + '_nodes')))]}}"
+    app_group_name_list: "{{(app_group_name_list | default([])) + [((instance.tags.Role == 'none') | ternary(application, application + '_' + instance.tags.Role))]}}"
+  with_items: "{{ec2_instances}}"
+  loop_control:
+    loop_var: instance
+# add the instances created to the corresponding application host groups
+- name: Add new instances to the appropriate host groups
+  add_host:
+    hostname: "{{item.1.private_ip}}"
+    groups: "{{app_group_name_list[item.0 | int]}},{{node_list_name_list[item.0 | int]}}"
+    ansible_ssh_private_key_file: "{{keyfile_path}}"
+  with_indexed_items: "{{ec2_instances}}"
+  when: not (ec2 | skipped) and (ec2_instances | length) > 0
 # wait_for doesn't work with a proxy, so we need to ssh and check output
 - name: Wait for instances to be accessible via SSH
   shell: /bin/sleep 10 && /usr/bin/ssh -i "{{keyfile_path}}" "{{user}}"@"{{instance.private_ip}}" echo DataNexus

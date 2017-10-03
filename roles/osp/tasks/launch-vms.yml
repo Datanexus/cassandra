@@ -98,13 +98,13 @@
   stat: path="{{public_keyfile_path}}"
   register: existing_key
 # if there is an existing key, use it
-- block: 
+- block:
   - name: Use existing public key at {{public_keyfile_path}}
     os_keypair:
       cloud: "{{tenant}}"
       state: present
       name: "{{region}}-{{project}}-{{application}}-{{domain}}"
-      public_key_file: "{{public_keyfile_path}}" 
+      public_key_file: "{{public_keyfile_path}}"
     register: old_keypair
   - set_fact: keypair="{{old_keypair}}"
   when: existing_key.stat.exists
@@ -164,7 +164,7 @@
       Application: "{{application}}"
       Cluster: "{{cluster | default('a')}}"
       Role: "{{node_role_list[item | int]}}"
-      Dataflow: "{{dataflow | default('none')}}"    
+      Dataflow: "{{dataflow | default('none')}}"
     region_name: "{{region}}"
     availability_zone: "{{zone}}"
     image: "{{image}}"
@@ -189,8 +189,22 @@
     network: "{{float_pool}}"
     nat_destination: "{{external_uuid}}"
   with_items: "{{osp_out.results}}"
-  register: 
+  register:
   when: not osp_out | skipped and osp_out.changed and osp_out.results | length > 0
+# construct the `app_group_name_list` and `node_list_name_list` lists from the
+# `application_roles` list
+- set_fact:
+    node_list_name_list: "{{(node_list_name_list | default([])) + [((item == 'none') | ternary((application + '_nodes'), (application + '_' + item + '_nodes')))]}}"
+    app_group_name_list: "{{(app_group_name_list | default([])) + [((item == 'none') | ternary(application, application + '_' + item))]}}"
+  with_items: "{{node_role_list}}"
+# add the instances created to the corresponding application host group
+- name: Add new instances to the appropriate host groups
+  add_host:
+    name: "{{item.1.server.addresses.private.0['addr']}}"
+    groups: "{{app_group_name_list[item.0 | int]}},{{node_list_name_list[item.0 | int]}}"
+    ansible_ssh_host: "{{item.1.server.addresses.private.0['addr']}}"
+    ansible_ssh_private_key_file: "{{private_keyfile_path}}"
+  with_indexed_items: "{{osp_out.results}}"
 # wait_for doesn't work with a proxy, so we need to ssh and check output
 - name: Wait for instances to be accessible via SSH
   shell: /bin/sleep 10 && /usr/bin/ssh -i "{{private_keyfile_path}}" "{{user}}@{{item.server.addresses.private.0['addr']}}" echo DataNexus

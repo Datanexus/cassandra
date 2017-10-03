@@ -1,7 +1,13 @@
 # (c) 2017 DataNexus Inc.  All Rights Reserved.
 ---
-# Launch VMs if they aren't already running; to do so, we first need to
-# determine the list of roles used in a deployment for this application;
+# first, check to make sure that the external_subnet is defined; if it is not,
+# then it's an error
+- name: Ensure that external_subnet is defined
+  fail:
+    msg: "The external_subnet parameter must be defined"
+  run_once: true
+  when: external_subnet is undefined
+# next, determine the list of roles used in a deployment for this application;
 # start by selecting the node map entries for this application
 - set_fact:
     node_map_entries: "{{node_map | selectattr('application', 'equalto', application) | list}}"
@@ -13,25 +19,6 @@
 # should be added to the `roles_list` we just constructed, above)
 - set_fact:
     application_roles: "{{((roles_list | length) == (node_map_entries | length)) | ternary(roles_list, roles_list + ['none'])}}"
-# If we're running this command for to build a cluster in OpenStack, then use
-# the`openstack.py` command to gather the dynamic inventory information that
-# we need to build our application host groups
-- name: Run openstack command to gather inventory information
-  shell: "{{role_path}}/utils/openstack.py --list"
-  register: os_inventory_output
-  run_once: true
-- set_fact:
-    os_inventory_json: "{{os_inventory_output.stdout | from_json}}"
-# then build lists of matching nodes based on the defined cloud, tenant, project
-# dataflow, domain, and cluster
-- set_fact:
-    cloud_nodes: "{{(os_inventory_json | json_query('[\"meta-Cloud_' + cloud + '\"]')).0}}"
-    tenant_nodes: "{{(os_inventory_json | json_query('[\"meta-Tenant_' + tenant + '\"]')).0}}"
-    project_nodes: "{{(os_inventory_json | json_query('[\"meta-Project_' + project + '\"]')).0}}"
-    dataflow_nodes: "{{(os_inventory_json | json_query('[\"meta-Dataflow_' + (dataflow | default('none')) + '\"]')).0}}"
-    domain_nodes: "{{(os_inventory_json | json_query('[\"meta-Domain_' + domain + '\"]')).0}}"
-    application_nodes: "{{(os_inventory_json | json_query('[\"meta-Application_' + application + '\"]')).0}}"
-    cluster_nodes: "{{(os_inventory_json | json_query('[\"meta-Cluster_' + (cluster | default('a')) + '\"]')).0}}"
 # and build a list of the instances that match the input roles from the
 # matching `node_map` entries
 - set_fact:
@@ -45,11 +32,11 @@
 - set_fact:
     matching_instances_found: "{{not (matching_instances | length) == 0}}"
     root_volume_default: "{{(data_volume is defined) | ternary(11, 40)}}"
-    multi_interface: "{{external_subnet is defined and external_subnet != internal_subnet}}"
+    multi_interface: "{{internal_subnet is defined and external_subnet != internal_subnet}}"
 - set_fact:
-    external_subnet: "{{internal_subnet}}"
-  when: external_subnet is undefined
+    internal_subnet: "{{external_subnet}}"
+  when: internal_subnet is undefined
 # if we didn't find any matching instances, then launch a set of VMs that are
 # tagged with the input tags
-- include: launch-vms.yml static=no        
+- include: launch-vms.yml static=no
   when: not matching_instances_found

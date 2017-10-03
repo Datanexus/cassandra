@@ -1,24 +1,18 @@
 # (c) 2017 DataNexus Inc.  All Rights Reserved
 ---
-# If we're running this command for to build a cluster in OpenStack, and if we
-# haven't gathered inventory data yet in this play or if the inventory info
-# that we gathered earlier (in the `osp` role) is out of date because there
-# were no new nodes added to the environment and, as such, we added new nodes
-# to the environment, then use the`openstack.py` command to gather the dynamic
-# inventory information that we need to build our application host groups
+# If we're building a cluster in an OpenStack environment, then use the
+# `openstack.py` command to gather the dynamic inventory information that we
+# need to build our application host groups
 - block:
+  # first run the `openstack.py` command to gather the inventory information
   - name: Run openstack command to gather inventory information
     shell: "{{role_path}}/utils/openstack.py --list"
     register: os_inventory_output
     run_once: true
   - set_fact:
       os_inventory_json: "{{os_inventory_output.stdout | from_json}}"
-  when:
-    - cloud == "osp"
-    - matching_instances_found is undefined or (not matching_instances_found)
-# then build lists of matching nodes based on the defined cloud, tenant, project
-# dataflow, domain, and cluster
-- block:
+  # then build lists of matching nodes based on the defined cloud, tenant, project
+  # dataflow, domain, and cluster
   - set_fact:
       cloud_nodes: "{{(os_inventory_json | json_query('[\"meta-Cloud_' + cloud + '\"]')).0}}"
       tenant_nodes: "{{(os_inventory_json | json_query('[\"meta-Tenant_' + tenant + '\"]')).0}}"
@@ -26,15 +20,15 @@
       dataflow_nodes: "{{(os_inventory_json | json_query('[\"meta-Dataflow_' + (dataflow | default('none')) + '\"]')).0}}"
       domain_nodes: "{{(os_inventory_json | json_query('[\"meta-Domain_' + domain + '\"]')).0}}"
       cluster_nodes: "{{(os_inventory_json | json_query('[\"meta-Cluster_' + (cluster | default('a')) + '\"]')).0}}"
-  # then loop through the host_group_list, building each host group (in turn)
+  # and, finally, loop through the host_group_list, building each host group
+  # (in turn) from the lists of nodes we just constructed
   - include: ../files/build_osp_host_groups.yml
     with_items: "{{host_group_list}}"
     loop_control:
       loop_var: host_group_item
   when: cloud == "osp"
-
-# If we're running this command for to build a cluster in OpenStack, then loop
-# through the host_group_list, building each host group (in turn)
+# If we're building a cluster in an AWS environtment, then loop through the
+# host_group_list, building each host group (in turn)
 - include: ../files/build_aws_host_groups.yml
   with_items: "{{host_group_list}}"
   loop_control:

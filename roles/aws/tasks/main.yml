@@ -1,6 +1,13 @@
 # (c) 2017 DataNexus Inc.  All Rights Reserved.
 ---
-# first, determine the list of roles used in a deployment for this application;
+# first, check to make sure that the external_subnet is defined; if it is not,
+# then it's an error
+- name: Ensure that external_subnet is defined
+  fail:
+    msg: "The external_subnet parameter must be defined"
+  run_once: true
+  when: external_subnet is undefined
+# next, determine the list of roles used in a deployment for this application;
 # start by selecting the node map entries for this application
 - set_fact:
     node_map_entries: "{{node_map | selectattr('application', 'equalto', application) | list}}"
@@ -36,11 +43,11 @@
 - set_fact:
     matching_instances_found: "{{not (matching_instances | length) == 0}}"
     root_volume_default: "{{(data_volume is defined) | ternary(11, 40)}}"
-    multi_interface: "{{external_subnet is defined and external_subnet != internal_subnet}}"
+    multi_interface: "{{internal_subnet is defined and external_subnet != internal_subnet}}"
 - set_fact:
-    external_subnet: "{{internal_subnet}}"
-  when: external_subnet is undefined
+    internal_subnet: "{{external_subnet}}"
+  when: internal_subnet is undefined
 # if we didn't find any matching instances that are running, then
 # launch a set of VMs with those tags
-- include: launch-amis.yml static=no        
+- include: launch-amis.yml static=no
   when: not matching_instances_found

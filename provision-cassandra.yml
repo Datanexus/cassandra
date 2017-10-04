@@ -40,6 +40,14 @@
       - set_fact:
           num_cassandra_seed_nodes: "{{groups['cassandra_seed'] | default([]) | length}}"
           num_cassandra_nodes: "{{groups['cassandra'] | default([]) | length}}"
+      # if an existing set of Cassandra nodes were found, throw an error unless
+      # the reuse_existing_nodes flag was set to 'true' or 'yes')
+      - block:
+        - name: Fail playbook run if existing nodes found and user did not request reuse
+          fail:
+            msg: "Found an existing set of nodes - {{(((groups['cassandra_seed'] | default([])) + (groups['cassandra'] | default([]))) | to_yaml).split('\n').0}}; aborting playbook run"
+          when: not((reuse_existing_nodes | default(false)) | bool)
+        when: (num_cassandra_seed_nodes | int) + (num_cassandra_nodes | int) > 0
       # if at least one seed node was not found (or at least one seed node is
       # not defined in the node_map), then it's an error
       - fail:

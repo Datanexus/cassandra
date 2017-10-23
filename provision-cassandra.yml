@@ -54,16 +54,19 @@
           msg: "At least one seed node must be provided for Cassandra deployments"
         when:
           - (num_cassandra_seed_nodes | int == 0) and (node_map_seed_entries.0.count == 0)
+
       # if there were no Cassandra nodes found, then deploy a matching set of
       # instances into the target cloud environment, ensuring that there
       # are an appropriately tagged, based on the input tags and the node_map
       # entries for this application
-      - include_role:
+      - name: launching aws vms
+        include_role:
           name: 'aws'
         when: num_cassandra_seed_nodes | int == 0 and num_cassandra_nodes | int == 0 and cloud == 'aws'
-      - include_role:
+      - name: launching osp vms
+        include_role:
           name: 'osp'
-        when: num_cassandra_seed_nodes | int == 0 and num_cassandra_nodes == 0 and cloud == 'osp'
+        when: num_cassandra_seed_nodes | int == 0 and num_cassandra_nodes | int == 0 and cloud == 'osp'
       when: cloud is defined and (cloud == 'aws' or cloud == 'osp')
 
 # If we're dynamically provisioning, then do some final configuration on the

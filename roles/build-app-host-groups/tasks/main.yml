@@ -22,14 +22,15 @@
       cluster_nodes: "{{(os_inventory_json | json_query('[\"meta-Cluster_' + (cluster | default('a')) + '\"]')).0}}"
   # and, finally, loop through the host_group_list, building each host group
   # (in turn) from the lists of nodes we just constructed
-  - include: ../files/build_osp_host_groups.yml
+  - include_tasks: ../files/build_osp_host_groups.yml
     with_items: "{{host_group_list}}"
     loop_control:
       loop_var: host_group_item
   when: cloud == "osp"
+  
 # If we're building a cluster in an AWS environtment, then loop through the
 # host_group_list, building each host group (in turn)
-- include: ../files/build_aws_host_groups.yml
+- include_tasks: ../files/build_aws_host_groups.yml
   with_items: "{{host_group_list}}"
   loop_control:
     loop_var: host_group_item

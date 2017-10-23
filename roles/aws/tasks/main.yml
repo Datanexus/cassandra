@@ -20,7 +20,7 @@
 - set_fact:
     application_roles: "{{((roles_list | length) == (node_map_entries | length)) | ternary(roles_list, roles_list + ['none'])}}"
 # Launch AMIs if they aren't already running
-- ec2_remote_facts:
+- ec2_instance_facts:
     region: "{{region}}"
     filters:
       instance-state-name: running
@@ -49,5 +49,5 @@
   when: internal_subnet is undefined
 # if we didn't find any matching instances that are running, then
 # launch a set of VMs with those tags
-- include: launch-amis.yml static=no
+- include_tasks: launch-amis.yml
   when: not matching_instances_found

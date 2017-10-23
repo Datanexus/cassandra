@@ -38,5 +38,5 @@
   when: internal_subnet is undefined
 # if we didn't find any matching instances, then launch a set of VMs that are
 # tagged with the input tags
-- include: launch-vms.yml static=no
+- include_tasks: launch-vms.yml
   when: not matching_instances_found

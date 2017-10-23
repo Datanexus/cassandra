@@ -9,9 +9,9 @@
     node_list_name: "{{(hg_item_role == 'none') | ternary((hg_item_name + '_nodes'), (hg_item_name + '_' + hg_item_role + '_nodes'))}}"
     app_group_name: "{{(hg_item_role == 'none') | ternary(hg_item_name,(hg_item_name + '_' + hg_item_role))}}"
 # then, gather the facts that are used to create our host group from the
-# `ec2_remote_facts` module
+# `ec2_instance_facts` module
 - name: Gather facts for the hosts that match our filter
-  ec2_remote_facts:
+  ec2_instance_facts:
     region: "{{region}}"
     filters:
       instance-state-name: running

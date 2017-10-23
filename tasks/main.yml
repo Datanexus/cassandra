@@ -1,9 +1,9 @@
 # (c) 2017 DataNexus Inc.  All Rights Reserved
 ---
-- include: install-required-packages.yml static=no
-- include: update-linux-settings.yml static=no
-- include: add-cassandra-user.yml static=no
-- include: install-apache-cassandra.yml static=no
+- include_tasks: install-required-packages.yml
+- include_tasks: update-linux-settings.yml
+- include_tasks: add-cassandra-user.yml
+- include_tasks: install-apache-cassandra.yml
 - include_role: name=configure-cassandra-nodes
-- include: create-cassandra-services.yml static=no
-- include: start-cassandra-services.yml static=no
+- include_tasks: create-cassandra-services.yml
+- include_tasks: start-cassandra-services.yml

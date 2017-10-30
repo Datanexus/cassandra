@@ -11,7 +11,7 @@
       dest: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
       remote_src: True
   - name: Replace the device in the new ifcfg-{{api_iface}} script
-    lineinfile: 
+    lineinfile:
       name: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
       regexp: '^DEVICE='
       line: 'DEVICE="{{api_iface}}"'
@@ -81,7 +81,7 @@
   - name: Set hostname actively so rebooting is unnecessary
     command: /usr/bin/hostnamectl set-hostname {{application}}-{{uuid.stdout}}
   - name: Set pretty hostname actively so rebooting is unnecessary
-    command: /usr/bin/hostnamectl --pretty set-hostname "{{tenant}} {{application}}"  
+    command: /usr/bin/hostnamectl --pretty set-hostname "{{tenant}} {{application}}"
   - name: Set new hostname in /etc/hostname
     replace:
       path: /etc/hostname

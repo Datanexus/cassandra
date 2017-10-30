@@ -27,7 +27,6 @@
     loop_control:
       loop_var: host_group_item
   when: cloud == "osp"
-  
 # If we're building a cluster in an AWS environtment, then loop through the
 # host_group_list, building each host group (in turn)
 - include_tasks: ../files/build_aws_host_groups.yml

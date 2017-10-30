@@ -24,10 +24,12 @@
           node_map_seed_entries: "{{node_map | selectattr('application', 'equalto', application) | selectattr('role', 'defined') | selectattr('role', 'equalto', 'seed') | list}}"
       # if more than two node_map entries were found or no matching node_map
       # entries were found, then it's an error
-      - fail:
+      - name: Fail playbook run if more than two cassandra node_map entries were found
+        fail:
           msg: "Multiple {{application}} node_map entries found"
         when: node_map_entries | length > 2
-      - fail:
+      - name: Fail playbook run if no cassandra node_map entries were found
+        fail:
           msg: "No {{application}} node_map entries found"
         when: node_map_entries | length == 0
       # build the cassandra and cassandra_seed host groups from existing inventory
@@ -50,7 +52,8 @@
         when: (num_cassandra_seed_nodes | int) + (num_cassandra_nodes | int) > 0
       # if at least one seed node was not found (or at least one seed node is
       # not defined in the node_map), then it's an error
-      - fail:
+      - name: Fail playbook run if no seed nodes were found in the node_map
+        fail:
           msg: "At least one seed node must be provided for Cassandra deployments"
         when:
           - (num_cassandra_seed_nodes | int == 0) and (node_map_seed_entries.0.count == 0)
@@ -59,11 +62,11 @@
       # instances into the target cloud environment, ensuring that there
       # are an appropriately tagged, based on the input tags and the node_map
       # entries for this application
-      - name: launching aws vms
+      - name: Launch AWS VMs
         include_role:
           name: 'aws'
         when: num_cassandra_seed_nodes | int == 0 and num_cassandra_nodes | int == 0 and cloud == 'aws'
-      - name: launching osp vms
+      - name: Launch OSP VMs
         include_role:
           name: 'osp'
         when: num_cassandra_seed_nodes | int == 0 and num_cassandra_nodes | int == 0 and cloud == 'osp'

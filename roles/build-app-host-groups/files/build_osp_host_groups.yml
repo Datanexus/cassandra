@@ -29,17 +29,24 @@
 # containing that list and create the appropriately named host groups
 - set_fact:
     "{{node_list_name}}": "{{app_nodes}}"
+
 - name: Create {{app_group_name}} host group from OpenStack meta-data
   add_host:
     name: "{{item}}"
     groups: "{{app_group_name}},{{node_list_name}}"
-    ansible_ssh_host: "{{(os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.private[].addr') | list).0}}"
+    ansible_host: "{{ (os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.private[1].addr')) }}"
     ansible_ssh_private_key_file: "{{private_key_path}}/{{region}}-{{project}}-{{hg_item_name}}-{{domain}}-private-key.pem"
   with_items: "{{app_nodes | default([])}}"
-# finally, add the floating IP addresses for nodes in this application group to
-# the `osp_floating_ip` list (this fact currently is not used, but it was used
-# in the past so we still build it)
-- name: Add floating IP addresses to osp_floating_ip for the {{app_group_name}} nodes
-  set_fact:
-    osp_floating_ip: "{{(osp_floating_ip | default({})) | combine({item: (os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.public') | selectattr('OS-EXT-IPS:type', 'equalto', 'floating') | map(attribute='addr') | list).0})}}"
+  when:
+    - internal_uuid == external_uuid
+
+# multiple subnet hostgroups already have the correct ansible_host
+- name: Create {{app_group_name}} host group from OpenStack meta-data
+  add_host:
+    name: "{{item}}"
+    groups: "{{app_group_name}},{{node_list_name}}"
+    ansible_host: "{{(os_inventory_json | json_query('_meta.hostvars.\"' + item + '\".openstack.addresses.private[].addr') | list).0}}"
+    ansible_ssh_private_key_file: "{{private_key_path}}/{{region}}-{{project}}-{{hg_item_name}}-{{domain}}-private-key.pem"
   with_items: "{{app_nodes | default([])}}"
+  when:
+    - internal_uuid != external_uuid

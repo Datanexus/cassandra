@@ -19,6 +19,11 @@
 # should be added to the `roles_list` we just constructed, above)
 - set_fact:
     application_roles: "{{((roles_list | length) == (node_map_entries | length)) | ternary(roles_list, roles_list + ['none'])}}"
+
+# set the list of nodes for this application
+- set_fact:
+    application_nodes: "{{(os_inventory_json | json_query('[\"meta-Application_' + application + '\"]')).0}}"
+
 # and build a list of the instances that match the input roles from the
 # matching `node_map` entries
 - set_fact:
@@ -29,6 +34,7 @@
 # that are used when launching instances (below) if no matching nodes are found
 - set_fact:
     matching_instances: "{{cloud_nodes | intersect(tenant_nodes) | intersect(project_nodes) | intersect(dataflow_nodes) | intersect(domain_nodes) | intersect(application_nodes) | intersect(cluster_nodes) | intersect(role_nodes)}}"
+
 - set_fact:
     matching_instances_found: "{{not (matching_instances | length) == 0}}"
     root_volume_default: "{{(data_volume is defined) | ternary(11, 40)}}"

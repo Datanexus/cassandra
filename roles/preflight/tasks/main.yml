@@ -5,25 +5,36 @@
 # if we have multiple networks, then add the interface script for
 # the public interface and configure the public and private networks
 - block:
-  - name: Create new ifcfg-{{api_iface}} script
-    copy:
-      src: "/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}"
-      dest: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
-      remote_src: True
-  - name: Replace the device in the new ifcfg-{{api_iface}} script
-    lineinfile:
-      name: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
-      regexp: '^DEVICE='
-      line: 'DEVICE="{{api_iface}}"'
-  - name: Ensure a default route exists for the {{api_iface}} interface
-    become: true
-    lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="yes"'
-  - name: Remove the default route for the {{data_iface}} interface
-    become: true
-    lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="no"'
+  - name: CASSANDRA INTERFACES | creating ifcfg-{{ api_iface }}
+    blockinfile:
+      path: "/etc/sysconfig/network-scripts/ifcfg-{{ api_iface }}"
+      create: yes
+      mode: 0644
+      block: |
+        BOOTPROTO=dhcp
+        DEVICE={{ api_iface }}
+        ONBOOT=yes
+        TYPE=Ethernet
+        USERCTL=no
+        DEFROUTE=
+
+  # - name: Create new ifcfg-{{api_iface}} script
+  #   copy:
+  #     src: "/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}"
+  #     dest: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
+  #     remote_src: True
+  # - name: Replace the device in the new ifcfg-{{api_iface}} script
+  #   lineinfile:
+  #     name: "/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}"
+  #     regexp: '^DEVICE='
+  #     line: 'DEVICE="{{api_iface}}"'
+  # - name: Ensure a default route exists for the {{api_iface}} interface
+  #   lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{api_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="yes"'
+  # - name: Remove the default route for the {{data_iface}} interface
+  #   become: true
+  #   lineinfile: name="/etc/sysconfig/network-scripts/ifcfg-{{data_iface}}" regexp='^DEFROUTE=' line='DEFROUTE="no"'
   # restart the network
   - name: Restart the network
-    become: true
     service:
       name: network
       state: restarted

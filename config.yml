@@ -7,7 +7,7 @@
 cloud: aws
 tenant: datanexus
 project: demo
-domain: production
+domain: development
 # network configuration used when creating VMs
 cidr_block: '10.10.0.0/16'
 internal_subnet: '10.10.1.0/24'
@@ -15,7 +15,9 @@ external_subnet: '10.10.2.0/24'
 # username used to access the system via SSH
 user: 'centos'
 # AWS-specific parameters
-region: us-west-2
+region: us-east-2
+node_map:
+  - { application: cassandra, role: seed, count: 3 }
 # node type and image ID to deploy; note that the image ID is optional for AWS
 # deployments but mandatory for OSP deployments; if left undefined in an AWS
 # deployment then then the playbook will search for an appropriate image to use
@@ -23,4 +25,4 @@ type: 't2.large'
 #image: 'ami-f4533694'
 # the default data and root volume sizes
 root_volume: 11
-data_volume: 40
+data_volume: 20

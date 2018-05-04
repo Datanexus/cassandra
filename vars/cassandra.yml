@@ -12,7 +12,7 @@ cassandra_group: cassandra
 cassandra_user: cassandra
 
 # the version and distribution URL
-cassandra_version: "3.11.0"
+cassandra_version: "3.11.2"
 cassandra_url: "http://www-us.apache.org/dist/cassandra/{{ cassandra_version }}/apache-cassandra-{{ cassandra_version }}-bin.tar.gz"
 
 # path used to access private keys (defaults to the playbook directory)

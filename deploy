@@ -1,0 +1,24 @@
+#!/bin/sh
+# (c) Copyright 2016 DataNexus Inc.  All Rights Reserved. 
+# cassandra deployment wrapper
+
+export application=cassandra   # application overlay to deploy
+: "${AWS_PROFILE:=datanexus}" && export AWS_PROFILE="$AWS_PROFILE"    # sets this to a reasonable ~/.aws/credentials default
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] ; then
+    printf "Usage:   deploy [-h]\\thelp"
+    printf "\\t deploy [FILE | TENANT PROJECT CLOUD REGION DOMAIN CLUSTER SSH_USER TENANT_PATH]\\tdeploy %s overlay with FILE configuration or with the specified values\\n" "$application"
+    printf "Example: deploy datanexus demo aws us-east-1 development a centos /tmp/datanexus\\n"
+    printf "\\t deploy /tmp/configuration.yml\\n"
+    exit 0
+fi
+
+# likely called by the orchestrator to just pass through everything
+if [ $# -eq 4 ] && [ "$1" = "-e" ]; then
+  ./provision-cassandra "$3" "$4" "$1" "$2"
+# deploy cassandra as an overlay or a full deployment via configuration file
+elif [ $# -eq 8 ] && [ -d "$8" ]; then
+  ./provision-cassandra --tags "$application" -e "tenant=$1 project=$2 cloud=$3 region=$4 domain=$5 cluster=$6 user=$7 tenant_config_path=$8"
+elif [ $# -eq 1 ] && [ -f "$1" ] && [ -s "$1" ]; then
+  ./provision-cassandra --tags "vm,$application" -e "configuration=$1"
+fi

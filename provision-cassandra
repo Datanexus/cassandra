@@ -6,6 +6,7 @@
 # `cassandra_seed` host groups
 - name: Create cassandra and cassandra_seed host groups
   hosts: localhost
+  connection: local
   gather_facts: yes
   vars_files:
     - vars/cassandra.yml

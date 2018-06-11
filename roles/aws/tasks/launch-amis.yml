@@ -5,20 +5,22 @@
   ec2_vpc_net_facts:
     region: "{{region}}"
     filters:
-      cidr_block: "{{cidr_block}}"
+      cidr-block: "{{cidr_block}}"
   register: specified_vpc
+
 # retrieve the subnet information
 - name: Retrieve {{internal_subnet}} ID for {{cidr_block}} in {{cloud}} {{region}}
   ec2_vpc_subnet_facts:
     region: "{{region}}"
     filters:
-      cidr_block: "{{internal_subnet}}"
+      cidr-block: "{{internal_subnet}}"
   register: internal_subnet_result
+
 - name: Retrieve {{external_subnet}} ID for {{cidr_block}} in {{cloud}} {{region}}
   ec2_vpc_subnet_facts:
     region: "{{region}}"
     filters:
-      cidr_block: "{{external_subnet}}"
+      cidr-block: "{{external_subnet}}"
   register: external_subnet_result
   when: multi_interface
 # if we didn't get at least one VPC back from our cidr_block value, then it's
@@ -54,17 +56,19 @@
 # if we haven't already found one, then search for a CentOS7 AMI in the input
 # region
 - block:
+  
   - name: Search for CentOS 7 AMI for your region
-    ec2_ami_find:
-      name: "CentOS Linux 7 x86_64*"
+    ec2_ami_facts:
+      owners: 679593333241
       region: "{{region}}"
-      owner: 679593333241
-      virtualization_type: hvm
-      sort: name
-      sort_order: descending
-      sort_end: 1
+      filters:
+        name: "CentOS Linux 7 x86_64 HVM EBS ENA 1804_2*"
+        virtualization-type: hvm
     register: found_amis
-  - set_fact: image="{{found_amis.results[0].ami_id}}"
+    
+  - set_fact: image="{{ item.image_id}}"
+    with_items: "{{ found_amis.images }}"
+  
   when: image is undefined
 # create a couple of security groups; one for SSH access to the machines in
 # this project on the internal_subnet via the corresponding jumphost and
@@ -130,11 +134,14 @@
 - name: Check for existing {{keyfile_path}} file
   stat: path="{{keyfile_path}}"
   register: existing_key
+
 # if there is an existing key, use it
 - block:
+  
   - name: Generate public key from existing {{region}}-{{project}}-{{application}}-{{domain}}-private-key.pem
     command: "/usr/bin/ssh-keygen -f {{keyfile_path}} -y"
     register: public_key_from_pem
+
   - name: Using existing {{region}}-{{project}}-{{application}}-{{domain}} key
     ec2_key:
       region: "{{region}}"
@@ -142,22 +149,30 @@
       name: "{{region}}-{{project}}-{{application}}-{{domain}}"
       key_material: "{{public_key_from_pem.stdout}}"
     register: old_keypair
+    
   - set_fact: keypair="{{old_keypair}}"
+
   when: existing_key.stat.exists
+
 # otherwise, create a new key pair to use instead
 - block:
+  
   - name: Create new {{region}}-{{project}}-{{application}}-{{domain}} key
     ec2_key:
-      name: "{{region}}-{{project}}-{{application}}-{{domain}}"
-      region: "{{region}}"
+      name: "{{ region }}-{{ project }}-{{ application }}-{{ domain }}"
+      region: "{{ region }}"
     register: new_keypair
-  - set_fact: keypair="{{new_keypair}}"
+    
+  - set_fact: keypair="{{ new_keypair }}"
+    
   - name: Save new {{region}}-{{project}}-{{application}}-{{domain}} key
     copy:
-      dest: "{{keyfile_path}}"
-      content: "{{keypair.key.private_key}}"
+      dest: "{{ keyfile_path }}"
+      content: "{{ keypair.key.private_key}}"
       mode: 0400
+      
   when: not existing_key.stat.exists
+
 # launch the AMI
 - name: Launch AMIs
   ec2:
@@ -220,7 +235,7 @@
   loop_control:
     loop_var: instance
   when:
-    - not (ec2 | skipped) and (ec2_instances | length) > 0
+    - not (ec2 is skipped) and (ec2_instances | length) > 0
     - data_volume is defined
 # create a public internal ENI if needed
 - name: Create public internal ENI as eth1
@@ -239,7 +254,7 @@
     loop_var: instance
   when:
     - external_subnet_id is defined
-    - not (ec2 | skipped) and (ec2_instances | length) > 0
+    - not (ec2 is skipped) and (ec2_instances | length) > 0
 # if we created the public internal ENI, then configure it to delete
 # on termination and add an EIP
 - block:
@@ -259,7 +274,7 @@
       region: "{{region}}"
       device_id: "{{item.interface.id}}"
     with_items: "{{public_eni.results}}"
-  when: not public_eni | skipped and public_eni.changed and public_eni.results | length > 0
+  when: not public_eni is skipped and public_eni.changed and public_eni.results | length > 0
 # if we're deploying instances with a single NIC, then there's no jumphost,
 # so we should also configure SSH access for these nodes via their private
 # IP address
@@ -281,7 +296,7 @@
     with_items: "{{ec2_instances}}"
     loop_control:
       loop_var: instance
-    when: not (ec2 | skipped) and (ec2_instances | length) > 0
+    when: not (ec2 is skipped) and (ec2_instances | length) > 0
   when: not(multi_interface)
 # construct the `app_group_name_list` and `node_list_name_list` lists from the
 # `application_roles` list
@@ -298,7 +313,7 @@
     groups: "{{app_group_name_list[item.0 | int]}},{{node_list_name_list[item.0 | int]}}"
     ansible_ssh_private_key_file: "{{keyfile_path}}"
   with_indexed_items: "{{ec2_instances}}"
-  when: not (ec2 | skipped) and (ec2_instances | length) > 0
+  when: not (ec2 is skipped) and (ec2_instances | length) > 0
 # wait_for doesn't work with a proxy, so we need to ssh and check output
 - name: Wait for instances to be accessible via SSH
   shell: /bin/sleep 10 && /usr/bin/ssh -i "{{keyfile_path}}" "{{user}}"@"{{instance.private_ip}}" echo DataNexus
@@ -309,4 +324,4 @@
   with_items: "{{ec2_instances}}"
   loop_control:
     loop_var: instance
-  when: not (ec2 | skipped) and (ec2_instances | length) > 0
+  when: not (ec2 is skipped) and (ec2_instances | length) > 0

@@ -15,7 +15,7 @@ external_subnet: '10.10.2.0/24'
 # username used to access the system via SSH
 user: 'centos'
 # AWS-specific parameters
-region: us-east-2
+region: us-east-1
 node_map:
   - { application: cassandra, role: seed, count: 3 }
 # node type and image ID to deploy; note that the image ID is optional for AWS
